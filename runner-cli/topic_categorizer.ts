@@ -34,8 +34,44 @@ interface OutputFormat {
   topics: TopicOutput[];
 }
 
+interface TopicInput {
+  name: string;
+  subtopics?: SubtopicInput[];
+}
+
+interface SubtopicInput {
+  name: string;
+}
+
+/**
+ * Example topics.json input file:
+ * {
+ *   "topics": [
+ *     {
+ *       "name": "Security",
+ *       "subtopics": [
+ *         { "name": "Authentication" },
+ *         { "name": "Authorization" },
+ *         { "name": "Encryption" }
+ *       ]
+ *     },
+ *     {
+ *       "name": "Performance",
+ *       "subtopics": [
+ *         { "name": "Load Time" },
+ *         { "name": "Memory Usage" }
+ *       ]
+ *     },
+ *     {
+ *       "name": "Documentation"
+ *       // No subtopics for this topic
+ *     }
+ *   ]
+ * }
+ */
+
 // Processes categorized comments into the desired output format
-function processTopicData(categorizedComments: Comment[]): OutputFormat {
+function formatTopics(categorizedComments: Comment[]): OutputFormat {
   const topicMap = new Map<
     string,
     { citations: Set<string>; subtopics: Map<string, Set<string>> }
@@ -71,12 +107,12 @@ function processTopicData(categorizedComments: Comment[]): OutputFormat {
   const output: OutputFormat = {
     topics: Array.from(topicMap.entries()).map(([topicName, data]) => ({
       name: topicName,
-      citations: Array.from(data.citations),
+      citations: Array.from(data.citations).sort(),
       subtopics:
         data.subtopics.size > 0
           ? Array.from(data.subtopics.entries()).map(([subtopicName, citations]) => ({
               name: subtopicName,
-              citations: Array.from(citations),
+              citations: Array.from(citations).sort(),
             }))
           : undefined,
     })),
@@ -86,13 +122,19 @@ function processTopicData(categorizedComments: Comment[]): OutputFormat {
 }
 
 async function main(): Promise<void> {
+  const startTime = Date.now();
+
   // Parse command line arguments
   const program = new Command();
   program
     .option("-o, --outputFile <file>", "The output file name")
     .option("-i, --inputFile <file>", "The input file name")
     .option("-v, --vertexProject <project>", "The Vertex Project name")
-    .option("-r, --region <region>", "The Vertex region", "us-central1");
+    .option("-r, --region <region>", "The Vertex region", "us-central1")
+    .option(
+      "-t, --topicsFile <file>",
+      "Optional JSON file containing predefined topics and subtopics"
+    );
   program.parse(process.argv);
   const options = program.opts();
 
@@ -105,15 +147,26 @@ async function main(): Promise<void> {
     // Load comments
     console.log("Loading comments...");
     const comments = await getCommentsFromCsv(options.inputFile);
+    console.log(`Loaded ${comments.length} comments`);
 
-    // Learn topics
-    console.log("Learning topics...");
-    const topics = await mySensemaker.learnTopics(
-      comments,
-      true, // Include subtopics
-      undefined,
-      "Please identify the main topics and subtopics discussed in these comments"
-    );
+    let topics;
+    if (options.topicsFile) {
+      // Load predefined topics from JSON file
+      console.log("Loading predefined topics...");
+      const topicsContent = fs.readFileSync(options.topicsFile, "utf-8");
+      const topicsJson = JSON.parse(topicsContent) as { topics: TopicInput[] };
+      topics = topicsJson.topics;
+      console.log(`Loaded ${topics.length} predefined topics`);
+    } else {
+      // Learn topics
+      console.log("Learning topics...");
+      topics = await mySensemaker.learnTopics(
+        comments,
+        true, // Include subtopics
+        undefined,
+        "Please identify the main topics and subtopics discussed in these comments"
+      );
+    }
 
     // Categorize comments
     console.log("Categorizing comments...");
@@ -123,9 +176,21 @@ async function main(): Promise<void> {
       topics
     );
 
+    const endTime = Date.now();
+    const duration = (endTime - startTime) / 1000; // Convert to seconds
+
     // Process and format the output
     console.log("Processing results...");
-    const output = processTopicData(categorizedComments);
+    const output = formatTopics(categorizedComments);
+
+    console.log("\n=== Categorization Summary ===");
+    console.log(`Total comments processed: ${comments.length}`);
+    console.log(`Total topics: ${output.topics.length}`);
+    console.log(
+      `Total subtopics: ${output.topics.reduce((acc, topic) => acc + (topic.subtopics?.length || 0), 0)}`
+    );
+    console.log(`Time taken: ${(duration / 60).toFixed(2)} minutes`);
+    console.log("===========================\n");
 
     // Write to file
     const outputPath = `${options.outputFile}.json`;
