@@ -107,12 +107,12 @@ function formatTopics(categorizedComments: Comment[]): OutputFormat {
   const output: OutputFormat = {
     topics: Array.from(topicMap.entries()).map(([topicName, data]) => ({
       name: topicName,
-      citations: Array.from(data.citations).sort(),
+      citations: Array.from(data.citations).sort((a, b) => Number(a) - Number(b)),
       subtopics:
         data.subtopics.size > 0
           ? Array.from(data.subtopics.entries()).map(([subtopicName, citations]) => ({
               name: subtopicName,
-              citations: Array.from(citations).sort(),
+              citations: Array.from(citations).sort((a, b) => Number(a) - Number(b)),
             }))
           : undefined,
     })),
